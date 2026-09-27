@@ -11,7 +11,7 @@
       </div>
     </header>
 
-    <div class="stat-row">
+    <div class="stat-row" :title="algorithmNote">
       <article v-for="item in stats" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
         <strong class="stat-value">{{ item.value }}</strong>
@@ -65,18 +65,20 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
-import { request } from '@/api/client'
+import { fetchJson, request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
+type StatCard = { label: string; value: string | number }
 
 const ENDPOINT = '/api/contract'
-const columns = ["合同编号", "服务单位", "合同金额", "服务期限", "考核方式", "签订人员", "到期日期", "合同状态"]
+const columns = ["合同编号", "服务单位", "合同金额", "服务期限", "考核方式", "签订人员", "到期日期", "合同状态", "到期说明"]
 const actions = ["确认签订", "标记到期", "终止合同"]
 const statuses = ["待签订", "履行中", "已到期", "已终止"]
-const stats = [{"label": "履行中合同", "value": 0}, {"label": "即将到期合同", "value": 0}, {"label": "合同总金额", "value": 0}]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
+const stats = ref<StatCard[]>([])
+const algorithmNote = ref('')
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
@@ -101,8 +103,9 @@ async function runAction(action: string, row: Row) {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
-    if (!response.ok) {
-      throw new Error('运维合同动作未生效，请稍后重试')
+    const result = await response.json()
+    if (!response.ok || !result.ok) {
+      throw new Error(result.message ?? '运维合同动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {
@@ -114,13 +117,19 @@ async function reload() {
   errorMessage.value = ''
   const query = new URLSearchParams(filters.value as Record<string, string>).toString()
   try {
-    const response = await request(`${ENDPOINT}?${query}`)
-    if (!response.ok) {
+    // 列表与统计卡同一次刷新，后端两处共用同一份到期与金额算法
+    const [listResponse, statPayload] = await Promise.all([
+      request(`${ENDPOINT}?${query}`),
+      fetchJson<{ cards: StatCard[]; algorithm?: string }>(`${ENDPOINT}/stats`),
+    ])
+    if (!listResponse.ok) {
       throw new Error('运维合同列表读取失败')
     }
-    const payload = await response.json()
+    const payload = await listResponse.json()
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
+    stats.value = statPayload.cards ?? []
+    algorithmNote.value = statPayload.algorithm ?? ''
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '运维合同列表读取失败'
   }
