@@ -36,7 +36,15 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            <template v-if="column === '合同状态'">
+              <span :title="row.expiry_note ? String(row.expiry_note) : ''" :class="['status-tag', statusClass(row)]">
+                {{ row[column] ?? '—' }}
+                <em v-if="row.expiring" class="status-warn">即将到期</em>
+              </span>
+            </template>
+            <template v-else>{{ row[column] ?? '—' }}</template>
+          </td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -67,19 +75,31 @@ import { onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
-type Row = Record<string, string | number | null>
+type Row = Record<string, string | number | boolean | null>
 
 const ENDPOINT = '/api/contract'
 const columns = ["合同编号", "服务单位", "合同金额", "服务期限", "考核方式", "签订人员", "到期日期", "合同状态"]
 const actions = ["确认签订", "标记到期", "终止合同"]
-const statuses = ["待签订", "履行中", "已到期", "已终止"]
-const stats = [{"label": "履行中合同", "value": 0}, {"label": "即将到期合同", "value": 0}, {"label": "合同总金额", "value": 0}]
+const stats = ref([
+  { label: '履行中合同', value: 0 },
+  { label: '即将到期合同', value: 0 },
+  { label: '超期合同', value: 0 },
+  { label: '合同总金额', value: '—' },
+])
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+function statusClass(row: Row) {
+  if (row.overdue) return 'status-expired'
+  if (row.status === '已终止') return 'status-terminated'
+  if (row.expiring) return 'status-expiring'
+  if (row.expiry_note) return 'status-issue'
+  return ''
+}
 
 function resetFilters() {
   filters.value = {}
@@ -101,8 +121,9 @@ async function runAction(action: string, row: Row) {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
-    if (!response.ok) {
-      throw new Error('运维合同动作未生效，请稍后重试')
+    const payload = await response.json().catch(() => null)
+    if (!response.ok || payload?.ok === false) {
+      throw new Error(payload?.message || '运维合同动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {
@@ -110,17 +131,31 @@ async function runAction(action: string, row: Row) {
   }
 }
 
+// 列表与统计卡同一份接口口径，一起刷新，避免返回后两边对不上
 async function reload() {
   errorMessage.value = ''
   const query = new URLSearchParams(filters.value as Record<string, string>).toString()
   try {
-    const response = await request(`${ENDPOINT}?${query}`)
-    if (!response.ok) {
+    const [listResponse, statsResponse] = await Promise.all([
+      request(`${ENDPOINT}?${query}`),
+      request(`${ENDPOINT}/stats`),
+    ])
+    if (!listResponse.ok) {
       throw new Error('运维合同列表读取失败')
     }
-    const payload = await response.json()
+    if (!statsResponse.ok) {
+      throw new Error('运维合同统计读取失败')
+    }
+    const payload = await listResponse.json()
+    const summary = await statsResponse.json()
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
+    stats.value = [
+      { label: '履行中合同', value: summary.active_count ?? 0 },
+      { label: '即将到期合同', value: summary.expiring_count ?? 0 },
+      { label: '超期合同', value: summary.overdue_count ?? 0 },
+      { label: '合同总金额', value: summary.total_amount ?? '—' },
+    ]
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '运维合同列表读取失败'
   }

@@ -33,3 +33,9 @@ body { margin: 0; background: #f6f8fb; color: #1f2937; }
 .link { border: none; background: none; color: var(--brand); cursor: pointer; padding: 0; }
 .page-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .error-text { color: #b42318; }
+.status-tag { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 10px; font-style: normal; }
+.status-tag.status-expired { background: #fef3f2; color: #b42318; }
+.status-tag.status-terminated { background: #f2f4f7; color: var(--muted); }
+.status-tag.status-expiring { background: #fffaeb; color: #b54708; }
+.status-tag.status-issue { background: #fef3f2; color: #b42318; text-decoration: underline dotted; }
+.status-warn { font-style: normal; font-size: 11px; }
